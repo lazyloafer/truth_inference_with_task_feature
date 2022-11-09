@@ -4,7 +4,7 @@ import tensorflow as tf
 import matplotlib.cm as cm
 from matplotlib import pyplot as plt
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Activation, Dropout, Flatten, Dense
+from tensorflow.keras.layers import Activation, Dropout, Flatten, Dense, BatchNormalization
 import tensorflow.keras as keras
 from tensorflow.keras import backend as K
 from tensorflow.keras.layers import Layer
@@ -278,9 +278,11 @@ class Run_Music():
     def build_base_model(self):
         base_model = Sequential()
         # base_model.add(Flatten(input_shape=data_train_vgg16.shape[1:]))
-        base_model.add(Dense(64, activation='relu'))
-        base_model.add(Dense(256, activation='relu'))
-        # base_model.add(Dropout(0.5))
+        base_model.add(BatchNormalization(center=False, scale=False))
+        base_model.add(Dense(128, activation='relu'))
+        # base_model.add(Dense(256, activation='relu'))
+        base_model.add(Dropout(0.5))
+        base_model.add(BatchNormalization(center=False, scale=False))
         base_model.add(Dense(self.N_CLASSES))
         # base_model.add(Activation("softmax"))
         # base_model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
@@ -365,13 +367,98 @@ class Run_SP():
     def build_base_model(self):
         base_model = Sequential()
         # base_model.add(Flatten(input_shape=data_train_vgg16.shape[1:]))
-        base_model.add(Dense(64, activation='relu'))
-        base_model.add(Dense(256, activation='relu'))
-        # base_model.add(Dropout(0.5))
+        base_model.add(BatchNormalization(center=False, scale=False))
+        base_model.add(Dense(128, activation='relu'))
+        # base_model.add(Dense(256, activation='relu'))
+        base_model.add(Dropout(0.5))
+        base_model.add(BatchNormalization(center=False, scale=False))
         base_model.add(Dense(self.N_CLASSES))
-        # base_model.add(Activation("softmax"))
-        # base_model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
-        #                    loss='categorical_crossentropy')  ## for EM-NN
+
+        return base_model
+
+    def eval_model(self, model, test_data, test_labels):
+        # testset accuracy
+        preds_test = model.predict(test_data)
+        preds_test_num = np.argmax(preds_test, axis=1)
+        accuracy_test = 1.0 * np.sum(preds_test_num == test_labels) / len(test_labels)
+
+        return accuracy_test
+
+    def run(self):
+        ##CL-MW
+        model = self.build_base_model()
+
+        model.add(self.CrowdsClassification)
+
+        # instantiate specialized masked loss to handle missing answers
+        loss = MaskedMultiCrossEntropy().loss
+        optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
+        # compile model with masked loss and train
+        model.compile(optimizer=optimizer, loss=loss)
+        model.fit(self.task_feature, self.answers_bin_missings, epochs=self.N_EPOCHS, shuffle=True, batch_size=self.BATCH_SIZE, verbose=1)
+
+        # save weights from crowds layer for later
+        # weights = model.layers[5].get_weights()
+
+        # remove crowds layer before making predictions
+        model.pop()
+        model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+
+        accuracy_test = self.eval_model(model, self.task_feature, self.truth)
+        print("Accuracy: Test: %.3f" % (accuracy_test,))
+
+class Run_BCD():
+    def __init__(self, BATCH_SIZE, N_EPOCHS):
+        self.DATA_PATH = "./dataset/BCD/"
+        self.N_CLASSES = 2
+        self.BATCH_SIZE = BATCH_SIZE
+        self.N_EPOCHS = N_EPOCHS
+        self.task_feature, self.answers_bin_missings, self.truth = self.load_BCD_dataset()
+        self.N_ANNOT = self.answers_bin_missings.shape[-1]
+        self.loss = MaskedMultiCrossEntropy().loss
+        self.CrowdsClassification = CrowdsClassification(self.N_CLASSES, self.N_ANNOT, conn_type="MW")
+
+    def load_BCD_dataset(self):
+        truth_head = pd.read_csv('%s%s' % (self.DATA_PATH, 'truth.csv'), nrows=0)
+        truth = pd.read_csv('%s%s' % (self.DATA_PATH, 'truth.csv'), usecols=truth_head).values[:, -1]
+        # print(truth)
+
+        task_feature_head = pd.read_csv('%s%s' % (self.DATA_PATH, 'task_feature.csv'), nrows=0)
+        # print(task_feature_head)
+        task_feature = pd.read_csv('%s%s' % (self.DATA_PATH, 'task_feature.csv'), usecols=task_feature_head).values
+        # print(task_feature)
+
+        answers_head = pd.read_csv('%s%s' % (self.DATA_PATH, 'answer.csv'), nrows=0)
+        answers = pd.read_csv('%s%s' % (self.DATA_PATH, 'answer.csv'), usecols=answers_head).values
+        task_num = max(answers[:, 0]) + 1
+        worker_num = max(answers[:, 1]) + 1
+        answer_matrix = -1 * np.ones((task_num, worker_num), dtype=np.int32)
+
+        for i in range(answers.shape[0]):
+            answer_matrix[answers[i][0], answers[i][1]] = answers[i][2]
+        # print(answer_matrix[-1])
+        answers_bin_missings = []
+        for i in range(len(answer_matrix)):
+            row = []
+            for r in range(worker_num):
+                if answer_matrix[i, r] == -1:
+                    row.append(-1 * np.ones(self.N_CLASSES))
+                else:
+                    row.append(one_hot(answer_matrix[i, r], self.N_CLASSES)[0, :])
+            answers_bin_missings.append(row)
+        answers_bin_missings = np.array(answers_bin_missings).swapaxes(1, 2)  # task, class, worker
+        # print(answers_bin_missings.shape)
+        return task_feature, answers_bin_missings, truth
+
+    def build_base_model(self):
+        base_model = Sequential()
+        # base_model.add(Flatten(input_shape=data_train_vgg16.shape[1:]))
+        base_model.add(BatchNormalization(center=False, scale=False))
+        base_model.add(Dense(128, activation='relu'))
+        # base_model.add(Dense(256, activation='relu'))
+        base_model.add(Dropout(0.5))
+        base_model.add(BatchNormalization(center=False, scale=False))
+        base_model.add(Dense(self.N_CLASSES))
 
         return base_model
 
@@ -407,6 +494,7 @@ class Run_SP():
         print("Accuracy: Test: %.3f" % (accuracy_test,))
 
 # Run_LableMe(BATCH_SIZE=64, N_EPOCHS=50).run()
-# Run_Music(BATCH_SIZE=64, N_EPOCHS=1000).run()
-Run_SP(BATCH_SIZE=64, N_EPOCHS=50).run()
+# Run_Music(BATCH_SIZE=700, N_EPOCHS=1000).run()
+Run_SP(BATCH_SIZE=5000, N_EPOCHS=1000).run()
+# Run_BCD(BATCH_SIZE=1000, N_EPOCHS=1000).run()
 
