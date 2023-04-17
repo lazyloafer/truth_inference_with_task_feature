@@ -1,5 +1,7 @@
 # truth_inference_with_neural_network
 
+tensorflow-gpu==2.6.0
+
 # Neural Network
 1. AggNet (AggNet: Deep Learning From Crowds for Mitosis Detection in Breast Cancer Histology Images): Paper(https://ieeexplore.ieee.org/document/7405343). Source code(https://github.com/fmpr/CrowdLayer).
 2. LFC (Deep Learning from Crowds): Paper(https://www.aaai.org/ocs/index.php/AAAI/AAAI18/paper/view/16102; https://arxiv.org/abs/1709.01779). Source code(https://github.com/fmpr/CrowdLayer).
